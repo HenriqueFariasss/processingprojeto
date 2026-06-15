@@ -1,0 +1,844 @@
+// ============================================================
+// RADIOATIVA — Energia Nuclear Interativa
+// Projeto Processing — Tela Inicial + Abas + Transições
+// ============================================================
+
+import java.util.*;
+
+// ---------- Estado Global ----------
+int currentScreen = 0;   // 0=Home, 1=Sobre, 2=Tipos, 3=Reator, 4=Perigos, 5=Animação
+int targetScreen  = 0;
+float transAlpha  = 0;   // 0..255 para fade
+boolean fading    = false;
+boolean fadeIn    = false;
+int pendingScreen = 0;
+
+// ---------- Partículas da Home ----------
+Particle[] particles = new Particle[120];
+float rotAngle = 0;
+float pulseVal = 0;
+
+// ---------- Reator (aba 3) ----------
+ReactorSim reactor;
+
+// ---------- Animação (aba 5) ----------
+AnimacaoSim animacao;
+
+// ---------- Cores Globais ----------
+color COL_BG      = #0a0f0a;
+color COL_GREEN   = #39ff14;
+color COL_YELLOW  = #c8ff00;
+color COL_ORANGE  = #ff6600;
+color COL_RED     = #ff1a1a;
+color COL_DARK    = #0d1a0d;
+color COL_PANEL   = #111811;
+
+// ---------- Fontes ----------
+PFont fontMono;
+PFont fontTitle;
+
+// ---------- Scroll (abas de texto) ----------
+float scrollY     = 0;
+float targetScrollY = 0;
+
+// ============================================================
+void setup() {
+  fullScreen();
+  smooth(8);
+
+  fontMono  = createFont("Courier New", 14, true);
+  fontTitle = createFont("Courier New", 48, true);
+
+  for (int i = 0; i < particles.length; i++) {
+    particles[i] = new Particle();
+  }
+  reactor = new ReactorSim();
+  animacao = new AnimacaoSim();
+}
+
+// ============================================================
+void draw() {
+  background(COL_BG);
+
+  // Atualiza fade
+  if (fading) {
+    if (!fadeIn) {
+      transAlpha += 12;
+      if (transAlpha >= 255) {
+        transAlpha = 255;
+        currentScreen = pendingScreen;
+        scrollY = 0; targetScrollY = 0;
+        fadeIn = true;
+      }
+    } else {
+      transAlpha -= 12;
+      if (transAlpha <= 0) {
+        transAlpha = 0;
+        fading = false;
+        fadeIn = false;
+      }
+    }
+  }
+
+  // Renderiza tela atual
+  switch(currentScreen) {
+    case 0: drawHome();    break;
+    case 1: drawSobre();   break;
+    case 2: drawTipos();   break;
+    case 3: drawReator();  break;
+    case 4: drawPerigos(); break;
+    case 5: drawAnimacao(); break;
+  }
+
+  // Navbar (todas as telas exceto home)
+  if (currentScreen != 0) drawNavbar();
+
+  // Overlay de fade
+  if (fading || transAlpha > 0) {
+    noStroke();
+    fill(10, 25, 10, transAlpha);
+    rect(0, 0, width, height);
+
+    // Cruz radioativa no centro durante transição
+    if (transAlpha > 100) {
+      drawRadSymbolCenter(transAlpha);
+    }
+  }
+
+  pulseVal += 0.04;
+  rotAngle  += 0.008;
+}
+
+// ============================================================
+// HOME
+// ============================================================
+void drawHome() {
+  // Fundo com gradiente radial via pontos
+  for (int r = 300; r > 0; r -= 4) {
+    float a = map(r, 0, 300, 80, 0);
+    fill(30, 80, 20, a);
+    noStroke();
+    ellipse(width/2, height/2, r*2, r*2);
+  }
+
+  // Partículas
+  for (Particle p : particles) {
+    p.update();
+    p.display();
+  }
+
+  // Símbolo radioativo central girando
+  pushMatrix();
+  translate(width/2, height/2 - 20);
+  rotate(rotAngle);
+  float sc = 1.0 + 0.06 * sin(pulseVal);
+  scale(sc);
+  drawRadSymbol(90, COL_GREEN, 180);
+  popMatrix();
+
+  // Título
+  float glow = 0.5 + 0.5 * sin(pulseVal * 1.3);
+  textFont(fontTitle);
+  textAlign(CENTER, CENTER);
+
+  // sombra / glow
+  for (int g = 8; g > 0; g--) {
+    fill(57, 255, 20, (int)(18 * glow * g / 8.0));
+    text("RADIOATIVA", width/2 + g*0.5, height/2 + 120 + g*0.5);
+  }
+  fill(COL_GREEN);
+  text("RADIOATIVA", width/2, height/2 + 120);
+
+  textFont(fontMono);
+  textSize(13);
+  fill(COL_YELLOW, 200);
+  text("▸ Energia Nuclear Interativa ◂", width/2, height/2 + 158);
+
+  // Botões de menu
+  String[] labels = {"SOBRE RADIAÇÃO", "TIPOS DE RADIAÇÃO", "SIMULADOR DE REATOR", "RISCOS E SEGURANÇA", "ANIMAÇÃO INTERATIVA"};
+  int[] targets   = {1, 2, 3, 4, 5};
+  int bw = 200, bh = 42, gap = 12;
+  int startX = width/2 - bw - gap/2;
+  int startY = height/2 + 190;
+
+  for (int i = 0; i < labels.length; i++) {
+    int bx, by;
+    if (i < 4) {
+      int col = i % 2; int row = i / 2;
+      bx = startX + col * (bw + gap);
+      by = startY + row * (bh + gap);
+    } else {
+      bx = width/2 - bw/2;
+      by = startY + 2 * (bh + gap);
+    }
+    drawMenuButton(bx, by, bw, bh, labels[i], targets[i]);
+  }
+
+  // Footer
+  textSize(10);
+  fill(COL_GREEN, 80);
+  textAlign(CENTER, BOTTOM);
+  text("☢  Clique num botão para explorar  ☢", width/2, height - 10);
+}
+
+void drawMenuButton(int x, int y, int w, int h, String label, int target) {
+  boolean over = mouseX > x && mouseX < x+w && mouseY > y && mouseY < y+h;
+  float glowA = over ? 1.0 : 0.4 + 0.3 * sin(pulseVal + target);
+
+  // Borda
+  stroke(COL_GREEN, (int)(200 * glowA));
+  strokeWeight(over ? 2.0 : 1.0);
+  fill(COL_DARK, over ? 230 : 180);
+  rect(x, y, w, h, 4);
+
+  // Indicador lateral
+  noStroke();
+  fill(COL_GREEN, (int)(180 * glowA));
+  rect(x, y + h/2 - 8, 3, 16, 2);
+
+  // Texto
+  textFont(fontMono);
+  textSize(11);
+  textAlign(LEFT, CENTER);
+  fill(over ? COL_YELLOW : COL_GREEN, (int)(230 * glowA));
+  text("▸  " + label, x + 14, y + h/2);
+}
+
+// ============================================================
+// NAVBAR
+// ============================================================
+void drawNavbar() {
+  // Fundo da barra
+  noStroke();
+  fill(COL_PANEL);
+  rect(0, 0, width, 44);
+  stroke(COL_GREEN, 60);
+  strokeWeight(1);
+  line(0, 44, width, 44);
+
+  // Botão HOME
+  drawNavBtn(10, 8, 70, 28, "☢ HOME", 0, currentScreen == 0);
+
+  String[] navLabels  = {"SOBRE", "TIPOS", "REATOR", "PERIGOS", "ANIMAÇÃO"};
+  int[]    navTargets = {1, 2, 3, 4, 5};
+  int nx = 90;
+  for (int i = 0; i < navLabels.length; i++) {
+    drawNavBtn(nx, 8, 95, 28, navLabels[i], navTargets[i], currentScreen == navTargets[i]);
+    nx += 102;
+  }
+}
+
+void drawNavBtn(int x, int y, int w, int h, String label, int target, boolean active) {
+  boolean over = mouseX > x && mouseX < x+w && mouseY > y && mouseY < y+h;
+  noStroke();
+  if (active) {
+    fill(COL_GREEN, 40);
+    rect(x, y, w, h, 3);
+    stroke(COL_GREEN, 180);
+    strokeWeight(1);
+    noFill();
+    rect(x, y, w, h, 3);
+  } else if (over) {
+    fill(COL_GREEN, 20);
+    rect(x, y, w, h, 3);
+  }
+  textFont(fontMono);
+  textSize(11);
+  textAlign(CENTER, CENTER);
+  fill(active ? COL_GREEN : (over ? COL_YELLOW : color(150, 200, 150)));
+  text(label, x + w/2, y + h/2);
+}
+
+// ============================================================
+// ABA 1 — SOBRE RADIAÇÃO
+// ============================================================
+void drawSobre() {
+  // Scroll suave
+  scrollY = lerp(scrollY, targetScrollY, 0.12);
+
+  int px = 60, py = 65;
+  int pw = width - 120;
+
+  pushMatrix();
+  translate(0, scrollY);
+
+  sectionHeader(px, py, "☢  O QUE É RADIAÇÃO?");
+  bodyText(px, py + 44, pw,
+    "Radiação é a emissão e propagação de energia através do espaço ou de um meio material. " +
+    "Ela pode ocorrer na forma de ondas eletromagnéticas (como luz, raios X e gama) ou " +
+    "partículas subatômicas (como partículas alfa, beta e nêutrons).\n\n" +
+    "A radioatividade é o fenômeno pelo qual núcleos atômicos instáveis emitem radiação " +
+    "espontaneamente ao tentar atingir um estado de maior estabilidade energética. " +
+    "Esse processo foi descoberto por Henri Becquerel em 1896, e aprofundado por " +
+    "Marie e Pierre Curie, que isolaram os elementos Rádio e Polônio."
+  );
+
+  sectionHeader(px, py + 200, "⚛  ESTRUTURA DO ÁTOMO");
+  bodyText(px, py + 244, pw,
+    "O núcleo atômico é composto por prótons (carga positiva) e nêutrons (sem carga). " +
+    "Quando a relação entre prótons e nêutrons é desequilibrada, o núcleo se torna instável.\n\n" +
+    "Elementos com número atômico > 83 são naturalmente instáveis. " +
+    "Elementos artificialmente produzidos, como o Plutônio-239, também apresentam " +
+    "instabilidade e podem ser usados como combustível nuclear."
+  );
+
+  // Diagrama de átomo interativo
+  drawAtomDiagram(px + pw/2, py + 420, 90);
+
+  sectionHeader(px, py + 560, "📡  PENETRAÇÃO DA RADIAÇÃO");
+  drawPenetrationDiagram(px, py + 604, pw);
+
+  sectionHeader(px, py + 780, "⏱  MEIA-VIDA");
+  bodyText(px, py + 824, pw,
+    "A meia-vida (t½) é o tempo necessário para que metade dos átomos de uma amostra " +
+    "radioativa se desintegre. Cada isótopo tem uma meia-vida característica:\n\n" +
+    "  • Polônio-214:    0,000164 segundos\n" +
+    "  • Iodo-131:       8,02 dias\n" +
+    "  • Césio-137:      30,17 anos\n" +
+    "  • Carbono-14:     5.730 anos\n" +
+    "  • Urânio-238:     4.468.000.000 anos"
+  );
+
+  popMatrix();
+
+  // Scroll indicator
+  drawScrollHint();
+}
+
+// ============================================================
+// ABA 2 — TIPOS DE RADIAÇÃO
+// ============================================================
+void drawTipos() {
+  int px = 60, py = 65;
+
+  sectionHeader(px, py, "☢  TIPOS DE RADIAÇÃO IONIZANTE");
+
+  // Cartões
+  String[][] cards = {
+    {"α", "ALFA", "#ff6600",
+     "Partícula carregada composta por\n2 prótons + 2 nêutrons (núcleo de He-4).\n\nAlcance: ~5 cm no ar.\nBlindagem: folha de papel.\nPerigo interno: alto (se inalada/ingerida).\n\nFontes: Urânio, Rádio, Polônio."},
+    {"β", "BETA", "#c8ff00",
+     "Elétron (β⁻) ou pósitron (β⁺)\nemitido do núcleo.\n\nAlcance: ~1-2 m no ar.\nBlindagem: plástico ou alumínio.\nRisco cutâneo e interno moderado.\n\nFontes: Estrôncio-90, Carbono-14."},
+    {"γ", "GAMA", "#39ff14",
+     "Fóton de alta energia emitido\ndo núcleo após decaimento α ou β.\n\nAlcance: centenas de metros no ar.\nBlindagem: chumbo ou concreto.\nMaior risco externo ao corpo.\n\nFontes: Cobalto-60, Césio-137."},
+    {"n", "NÊUTRON", "#00cfff",
+     "Partícula neutra ejetada em\nfissão ou fusão nuclear.\n\nAlcance: varia (alta penetração).\nBlindagem: água, parafina, boro.\nAtiva materiais, risco elevado.\n\nFontes: Reatores, Cf-252."}
+  };
+
+  int cw = (width - 140) / 2;
+  int ch = 230;
+  int gap = 14;
+
+  for (int i = 0; i < cards.length; i++) {
+    int col = i % 2;
+    int row = i / 2;
+    int cx = 60 + col * (cw + gap);
+    int cy = py + 44 + row * (ch + gap);
+    drawRadCard(cx, cy, cw, ch, cards[i]);
+  }
+
+  // Tabela comparativa
+  sectionHeader(px, py + 44 + 2*(ch + gap) + 10, "📊  COMPARATIVO DE PENETRAÇÃO");
+  drawComparativeBar(px, py + 44 + 2*(ch + gap) + 54, width - 120);
+}
+
+void drawRadCard(int x, int y, int w, int h, String[] data) {
+  color c = unhex("FF" + data[2].substring(1));
+  boolean over = mouseX > x && mouseX < x+w && mouseY > y && mouseY < y+h;
+  float sc = over ? 1.012 : 1.0;
+
+  pushMatrix();
+  translate(x + w/2, y + h/2);
+  scale(sc);
+  translate(-(w/2), -(h/2));
+
+  // Fundo
+  noStroke();
+  fill(10, 25, 10, 220);
+  rect(0, 0, w, h, 6);
+
+  // Borda colorida
+  stroke(c, over ? 255 : 150);
+  strokeWeight(over ? 2 : 1);
+  noFill();
+  rect(0, 0, w, h, 6);
+
+  // Símbolo grande
+  textFont(fontTitle);
+  textSize(54);
+  textAlign(CENTER, TOP);
+  fill(c, over ? 255 : 180);
+  text(data[0], w/2, 10);
+
+  // Nome
+  textFont(fontMono);
+  textSize(13);
+  fill(c);
+  text(data[1], w/2, 72);
+
+  // Descrição
+  textSize(11);
+  textAlign(LEFT, TOP);
+  fill(200, 230, 200, 210);
+  drawWrappedText(data[3], 14, 96, w - 28, 14);
+
+  popMatrix();
+}
+
+void drawComparativeBar(int x, int y, int w) {
+  String[] types = {"ALFA (α)", "BETA (β)", "GAMA (γ)", "NÊUTRON (n)"};
+  float[] vals   = {0.05, 0.25, 0.85, 0.95};
+  color[] cols   = {COL_ORANGE, COL_YELLOW, COL_GREEN, #00cfff};
+  int bh = 28, gap = 10;
+
+  for (int i = 0; i < types.length; i++) {
+    int by = y + i * (bh + gap);
+    textFont(fontMono);
+    textSize(11);
+    textAlign(LEFT, CENTER);
+    fill(200, 230, 200);
+    text(types[i], x, by + bh/2);
+
+    int barX = x + 120;
+    int barW = w - 130;
+
+    // fundo
+    noStroke();
+    fill(30, 50, 30);
+    rect(barX, by, barW, bh, 3);
+
+    // barra
+    float fw = barW * vals[i];
+    float anim = fw * (0.9 + 0.1 * sin(pulseVal + i));
+    fill(cols[i], 200);
+    rect(barX, by, anim, bh, 3);
+
+    // % texto
+    textSize(10);
+    textAlign(RIGHT, CENTER);
+    fill(cols[i]);
+    text(nf(vals[i]*100, 0, 0) + "%", barX + barW - 6, by + bh/2);
+  }
+}
+
+// ============================================================
+// ABA 3 — SIMULADOR DE REATOR
+// ============================================================
+void drawReator() {
+  reactor.update();
+  reactor.display();
+}
+
+// ============================================================
+// ABA 4 — PERIGOS E SEGURANÇA
+// ============================================================
+void drawPerigos() {
+  scrollY = lerp(scrollY, targetScrollY, 0.12);
+  int px = 60, py = 65;
+  int pw = width - 120;
+
+  pushMatrix();
+  translate(0, scrollY);
+
+  sectionHeader(px, py, "⚠  EFEITOS BIOLÓGICOS");
+  bodyText(px, py + 44, pw,
+    "A radiação ionizante pode causar danos ao DNA das células. Dependendo da dose " +
+    "recebida (medida em Sievert — Sv), os efeitos variam de imperceptíveis a fatais.\n\n" +
+    "Doses abaixo de 0,1 Sv geralmente não causam efeitos agudos detectáveis, " +
+    "mas podem aumentar levemente o risco de câncer a longo prazo."
+  );
+
+  drawDoseTable(px, py + 185, pw);
+
+  sectionHeader(px, py + 430, "🛡  EQUIPAMENTOS DE PROTEÇÃO");
+  bodyText(px, py + 474, pw,
+    "A proteção contra radiação segue o princípio ALARA (As Low As Reasonably Achievable):\n\n" +
+    "  • Tempo: reduzir o tempo de exposição.\n" +
+    "  • Distância: dobrar a distância reduz a dose em 4x (lei do inverso do quadrado).\n" +
+    "  • Blindagem: usar materiais adequados para cada tipo de radiação."
+  );
+
+  drawShieldingInfo(px, py + 610, pw);
+
+  sectionHeader(px, py + 780, "☢  ACIDENTES HISTÓRICOS");
+  drawAccidents(px, py + 824, pw);
+
+  popMatrix();
+  drawScrollHint();
+}
+
+void drawDoseTable(int x, int y, int w) {
+  String[][] rows = {
+    {"0.0001 Sv", "Dose de uma radiografia de tórax", "#39ff14"},
+    {"0.001 Sv",  "Limite anual para profissionais (0,02 Sv/ano)", "#39ff14"},
+    {"0.1 Sv",    "Nenhum efeito agudo; risco de câncer aumenta", "#c8ff00"},
+    {"1 Sv",      "Náuseas, fadiga — Síndrome de Radiação Aguda leve", "#ff9900"},
+    {"4 Sv",      "LD50 — dose letal para 50% sem tratamento", "#ff4400"},
+    {"10+ Sv",    "Falência de órgãos; fatal em dias", "#ff1a1a"}
+  };
+
+  int rh = 34, rw = w;
+  for (int i = 0; i < rows.length; i++) {
+    int ry = y + i * rh;
+    color rc = unhex("FF" + rows[i][2].substring(1));
+
+    noStroke();
+    fill(rc, i % 2 == 0 ? 18 : 10);
+    rect(x, ry, rw, rh - 2, 3);
+
+    stroke(rc, 60);
+    strokeWeight(1);
+    noFill();
+    rect(x, ry, rw, rh - 2, 3);
+
+    textFont(fontMono);
+    textSize(11);
+    textAlign(LEFT, CENTER);
+    fill(rc, 220);
+    text(rows[i][0], x + 10, ry + rh/2 - 1);
+    fill(200, 230, 200, 200);
+    text(rows[i][1], x + 120, ry + rh/2 - 1);
+  }
+}
+
+void drawShieldingInfo(int x, int y, int w) {
+  String[] mats = {"PAPEL / PELE", "PLÁSTICO / ALUMÍNIO", "VIDRO DE CHUMBO", "CONCRETO DENSO", "ÁGUA / PARAFINA"};
+  String[] desc = {"Bloqueia α", "Bloqueia β", "Bloqueia γ (parcial)", "Bloqueia γ (total)", "Bloqueia nêutrons"};
+  color[] cols  = {COL_ORANGE, COL_YELLOW, COL_GREEN, COL_GREEN, #00cfff};
+  int bh = 36, gap = 8;
+  int bw  = (w - (mats.length-1)*gap) / mats.length;
+
+  for (int i = 0; i < mats.length; i++) {
+    int bx = x + i * (bw + gap);
+    noStroke();
+    fill(cols[i], 30);
+    rect(bx, y, bw, bh + 30, 4);
+    stroke(cols[i], 120);
+    strokeWeight(1);
+    noFill();
+    rect(bx, y, bw, bh + 30, 4);
+    textFont(fontMono);
+    textSize(9);
+    textAlign(CENTER, TOP);
+    fill(cols[i]);
+    text(mats[i], bx + bw/2, y + 6);
+    fill(200, 230, 200, 190);
+    text(desc[i], bx + bw/2, y + 22);
+  }
+}
+
+void drawAccidents(int x, int y, int w) {
+  String[][] acc = {
+    {"1986", "CHERNOBYL", "Ucrânia — Explosão no reator 4 libertou 400x a radiação de Hiroshima. Zona de exclusão de 30 km ainda ativa."},
+    {"2011", "FUKUSHIMA", "Japão — Tsunami causou fusão de 3 reatores. ~154.000 evacuados. Contaminação do oceano Pacífico."},
+    {"1987", "GOIÂNIA", "Brasil — Cápsula de Césio-137 abandonada causou 4 mortes e contaminação de 249 pessoas."}
+  };
+
+  int ah = 80, gap = 10;
+  for (int i = 0; i < acc.length; i++) {
+    int ay = y + i * (ah + gap);
+    noStroke();
+    fill(COL_RED, 15);
+    rect(x, ay, w, ah, 4);
+    stroke(COL_RED, 80);
+    strokeWeight(1);
+    noFill();
+    rect(x, ay, w, ah, 4);
+
+    textFont(fontMono);
+    textSize(22);
+    textAlign(LEFT, CENTER);
+    fill(COL_RED, 200);
+    text(acc[i][0], x + 14, ay + 28);
+
+    textSize(13);
+    fill(COL_YELLOW);
+    text(acc[i][1], x + 80, ay + 20);
+
+    textSize(11);
+    fill(200, 220, 200, 200);
+    drawWrappedText(acc[i][2], x + 80, ay + 36, w - 94, 13);
+  }
+}
+
+// ============================================================
+// HELPERS DE DESENHO
+// ============================================================
+void drawRadSymbol(float r, color c, int alpha) {
+  noStroke();
+  // Círculo central
+  fill(c, alpha);
+  ellipse(0, 0, r*0.3, r*0.3);
+
+  // 3 setores
+  for (int i = 0; i < 3; i++) {
+    pushMatrix();
+    rotate(TWO_PI / 3 * i);
+    fill(c, alpha);
+    arc(0, 0, r*2, r*2, radians(30), radians(90));
+    popMatrix();
+  }
+
+  // Anel externo vazio
+  stroke(c, alpha);
+  strokeWeight(3);
+  noFill();
+  ellipse(0, 0, r*2.2, r*2.2);
+}
+
+void drawRadSymbolCenter(float a) {
+  pushMatrix();
+  translate(width/2, height/2);
+  rotate(rotAngle * 2);
+  float sc = map(a, 100, 255, 0, 1);
+  scale(sc);
+  drawRadSymbol(30, COL_GREEN, (int)(a * 0.8));
+  popMatrix();
+}
+
+void drawAtomDiagram(int cx, int cy, int r) {
+  pushMatrix();
+  translate(cx, cy);
+
+  // Órbitas
+  stroke(COL_GREEN, 60);
+  strokeWeight(1);
+  noFill();
+  for (int i = 1; i <= 3; i++) {
+    pushMatrix();
+    rotate(rotAngle * i * 0.4);
+    ellipse(0, 0, r * i * 0.7, r * i * 0.35);
+    popMatrix();
+  }
+
+  // Elétrons nas órbitas
+  for (int i = 1; i <= 3; i++) {
+    pushMatrix();
+    rotate(rotAngle * i * 0.4);
+    float ex = cos(rotAngle * 2 * i) * r * i * 0.35;
+    float ey = sin(rotAngle * 2 * i) * r * i * 0.175;
+    noStroke();
+    fill(COL_YELLOW);
+    ellipse(ex, ey, 7, 7);
+    popMatrix();
+  }
+
+  // Núcleo
+  for (int g = 20; g > 0; g -= 2) {
+    fill(COL_RED, 15);
+    ellipse(0, 0, g*2, g*2);
+  }
+  fill(COL_RED);
+  ellipse(0, 0, 18, 18);
+  textFont(fontMono);
+  textSize(9);
+  textAlign(CENTER, CENTER);
+  fill(255);
+  text("n+p", 0, 0);
+
+  textSize(11);
+  fill(COL_GREEN, 180);
+  textAlign(CENTER, TOP);
+  text("Modelo atômico simplificado", 0, r + 10);
+
+  popMatrix();
+}
+
+void drawPenetrationDiagram(int x, int y, int w) {
+  int layers = 5;
+  int lw = w / layers;
+  String[] names = {"AR", "PAPEL", "ALUMÍNIO", "VIDRO/Pb", "CONCRETO"};
+  color[] lCols = {color(30, 60, 30), color(80, 60, 20), color(60, 80, 60), color(20, 40, 80), color(60, 60, 60)};
+
+  int dh = 90;
+  for (int i = 0; i < layers; i++) {
+    noStroke();
+    fill(lCols[i]);
+    rect(x + i*lw, y, lw, dh);
+    textFont(fontMono);
+    textSize(9);
+    textAlign(CENTER, BOTTOM);
+    fill(200, 230, 200, 180);
+    text(names[i], x + i*lw + lw/2, y + dh - 4);
+  }
+
+  // Setas de radiação
+  String[] radTypes = {"α", "β", "γ"};
+  float[] stops = {0.08, 0.35, 0.92};
+  color[] rCols = {COL_ORANGE, COL_YELLOW, COL_GREEN};
+  for (int i = 0; i < 3; i++) {
+    float arrowY = y + 18 + i * 20;
+    float endX   = x + w * stops[i];
+    stroke(rCols[i], 220);
+    strokeWeight(2);
+    line(x, arrowY, endX, arrowY);
+    // arrowhead
+    line(endX, arrowY, endX - 8, arrowY - 5);
+    line(endX, arrowY, endX - 8, arrowY + 5);
+    textFont(fontMono);
+    textSize(11);
+    textAlign(LEFT, CENTER);
+    fill(rCols[i]);
+    text(radTypes[i], x - 18, arrowY);
+  }
+}
+
+void sectionHeader(int x, int y, String label) {
+  stroke(COL_GREEN, 100);
+  strokeWeight(1);
+  line(x, y + 24, width - 60, y + 24);
+  textFont(fontMono);
+  textSize(15);
+  textAlign(LEFT, BOTTOM);
+  fill(COL_GREEN, 230);
+  text(label, x, y + 22);
+}
+
+void bodyText(int x, int y, int w, String txt) {
+  textFont(fontMono);
+  textSize(12);
+  textAlign(LEFT, TOP);
+  fill(190, 220, 190, 220);
+  drawWrappedText(txt, x, y, w, 16);
+}
+
+void drawWrappedText(String txt, float x, float y, float maxW, float lineH) {
+  String[] lines = txt.split("\n");
+  float curY = y;
+  for (String line : lines) {
+    String[] words = line.split(" ");
+    String curLine = "";
+    for (String word : words) {
+      String test = curLine.isEmpty() ? word : curLine + " " + word;
+      if (textWidth(test) > maxW) {
+        text(curLine, x, curY);
+        curY += lineH;
+        curLine = word;
+      } else {
+        curLine = test;
+      }
+    }
+    if (!curLine.isEmpty()) text(curLine, x, curY);
+    curY += lineH;
+  }
+}
+
+void drawScrollHint() {
+  noStroke();
+  fill(COL_GREEN, 80);
+  textFont(fontMono);
+  textSize(10);
+  textAlign(RIGHT, BOTTOM);
+  text("↕ scroll para mais conteúdo", width - 20, height - 8);
+}
+
+void drawAnimacao() {
+  animacao.update();
+  animacao.display();
+}
+// ============================================================
+void mousePressed() {
+  // Botões da Home
+  if (currentScreen == 0) {
+    String[] labels = {"SOBRE RADIAÇÃO", "TIPOS DE RADIAÇÃO", "SIMULADOR DE REATOR", "RISCOS E SEGURANÇA", "ANIMAÇÃO INTERATIVA"};
+    int[] targets   = {1, 2, 3, 4, 5};
+    int bw = 200, bh = 42, gap = 12;
+    int startX = width/2 - bw - gap/2;
+    int startY = height/2 + 190;
+    for (int i = 0; i < targets.length; i++) {
+      int bx, by;
+      if (i < 4) {
+        int col = i % 2, row = i / 2;
+        bx = startX + col * (bw + gap);
+        by = startY + row * (bh + gap);
+      } else {
+        bx = width/2 - bw/2;
+        by = startY + 2 * (bh + gap);
+      }
+      if (mouseX > bx && mouseX < bx+bw && mouseY > by && mouseY < by+bh) {
+        goTo(targets[i]); return;
+      }
+    }
+  }
+
+  // Navbar
+  if (currentScreen != 0) {
+    if (mouseX > 10 && mouseX < 80 && mouseY > 8 && mouseY < 36) { goTo(0); return; }
+    int[] nTargets = {1, 2, 3, 4, 5};
+    int nx = 90;
+    for (int t : nTargets) {
+      if (mouseX > nx && mouseX < nx+95 && mouseY > 8 && mouseY < 36) { goTo(t); return; }
+      nx += 102;
+    }
+  }
+
+  // Reator: controles
+  if (currentScreen == 3) reactor.handleClick(mouseX, mouseY);
+
+  // Animação: controles
+  if (currentScreen == 5) animacao.handleClick(mouseX, mouseY);
+}
+
+void mouseWheel(MouseEvent e) {
+  if (currentScreen == 1 || currentScreen == 4) {
+    targetScrollY -= e.getCount() * 28;
+    targetScrollY = constrain(targetScrollY, -900, 0);
+  }
+}
+
+void mouseDragged() {
+  if (currentScreen == 5) animacao.handleDrag(mouseX, mouseY);
+}
+
+void keyPressed() {
+  // ESC fecha o programa (comportamento padrão do Processing em fullScreen)
+}
+
+void goTo(int screen) {
+  if (fading || screen == currentScreen) return;
+  pendingScreen = screen;
+  fading = true;
+  fadeIn = false;
+  transAlpha = 0;
+}
+
+// ============================================================
+// PARTÍCULA
+// ============================================================
+class Particle {
+  float x, y, vx, vy, sz, life, maxLife, alpha;
+  color c;
+
+  Particle() { reset(); }
+
+  void reset() {
+    float ang = random(TWO_PI);
+    float rad = random(40, 220);
+    x = width/2 + cos(ang) * rad;
+    y = height/2 - 20 + sin(ang) * rad;
+    float speed = random(0.3, 1.2);
+    float outAng = ang + random(-0.4, 0.4);
+    vx = cos(outAng) * speed;
+    vy = sin(outAng) * speed;
+    sz = random(2, 6);
+    maxLife = random(80, 200);
+    life = maxLife;
+    int t = (int)random(3);
+    c = t == 0 ? COL_GREEN : t == 1 ? COL_YELLOW : COL_ORANGE;
+  }
+
+  void update() {
+    x += vx; y += vy;
+    life--;
+    if (life <= 0 || x < 0 || x > width || y < 0 || y > height) reset();
+  }
+
+  void display() {
+    float a = map(life, 0, maxLife, 0, 220);
+    noStroke();
+    fill(c, a * 0.4);
+    ellipse(x, y, sz * 2.5, sz * 2.5);
+    fill(c, a);
+    ellipse(x, y, sz, sz);
+  }
+}
