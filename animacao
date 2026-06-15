@@ -1,0 +1,481 @@
+// ============================================================
+// ANIMAÇÃO INTERATIVA — Decaimento Radioativo
+// Aba 5: o usuário clica para "excitar" átomos e observa
+// o decaimento com emissão de partículas alfa, beta e gama.
+// ============================================================
+
+class AnimacaoSim {
+
+  // ---- Grade de átomos ----
+  int COLS = 18, ROWS = 10;
+  AtomNode[] atoms;
+  int atomCount;
+
+  // ---- Partículas em voo ----
+  ArrayList<FlyParticle> flyParts = new ArrayList<FlyParticle>();
+
+  // ---- Modo selecionado pelo usuário ----
+  // 0 = Alpha, 1 = Beta, 2 = Gamma, 3 = Neutron (fissão)
+  int selectedMode = 0;
+  String[] modeNames  = {"ALFA  α", "BETA  β", "GAMA  γ", "FISSÃO n"};
+  color[]  modeCols   = {#ff6600, #c8ff00, #39ff14, #00cfff};
+  String[] modeDesc   = {
+    "Clique num átomo para emitir partícula α (He-4). Curto alcance.",
+    "Clique num átomo para emitir elétron β. Alcance médio.",
+    "Clique num átomo para irradiar fótons γ em todas as direções.",
+    "Clique num átomo para fissurar o núcleo e propagar nêutrons!"
+  };
+
+  // ---- Contador de decaimentos ----
+  int totalDecays = 0;
+  int[] decaysByType = {0, 0, 0, 0};
+
+  // ---- Efeitos de fundo ----
+  float bgPulse = 0;
+
+  // ---- Botões de modo ----
+  int BTN_Y = 580, BTN_W = 160, BTN_H = 34, BTN_GAP = 12;
+
+  AnimacaoSim() {
+    atomCount = COLS * ROWS;
+    atoms = new AtomNode[atomCount];
+    int ox = 52, oy = 58;
+    int spacingX = (820 - ox*2) / (COLS - 1);
+    int spacingY = (510 - oy) / (ROWS - 1);
+    for (int r = 0; r < ROWS; r++) {
+      for (int c = 0; c < COLS; c++) {
+        int idx = r * COLS + c;
+        float ax = ox + c * spacingX + random(-4, 4);
+        float ay = oy + r * spacingY + random(-4, 4);
+        atoms[idx] = new AtomNode(ax, ay);
+      }
+    }
+  }
+
+  void update() {
+    bgPulse += 0.025;
+
+    for (AtomNode a : atoms) a.update();
+
+    // Atualiza partículas em voo
+    for (int i = flyParts.size() - 1; i >= 0; i--) {
+      FlyParticle fp = flyParts.get(i);
+      fp.update();
+
+      // Colisão com átomos estáveis (nêutrons propagam fissão)
+      if (fp.type == 3) {
+        for (AtomNode a : atoms) {
+          if (!a.excited && !a.decayed && dist(fp.x, fp.y, a.x, a.y) < 16) {
+            a.excite(3);
+            fp.alive = false;
+            break;
+          }
+        }
+      }
+      if (!fp.alive) flyParts.remove(i);
+    }
+  }
+
+  void display() {
+    // Fundo com gradiente sutil pulsante
+    for (int r = 280; r > 0; r -= 6) {
+      float a = map(r, 0, 280, 30 + 12 * sin(bgPulse), 0);
+      noStroke();
+      fill(20, 60, 20, a);
+      ellipse(width/2, 290, r*2, r*2);
+    }
+
+    // Grade de conexões (lattice)
+    strokeWeight(1);
+    for (int r = 0; r < ROWS; r++) {
+      for (int c = 0; c < COLS; c++) {
+        AtomNode a = atoms[r * COLS + c];
+        if (c < COLS - 1) {
+          AtomNode b = atoms[r * COLS + c + 1];
+          stroke(30, 70, 30, 60);
+          line(a.x, a.y, b.x, b.y);
+        }
+        if (r < ROWS - 1) {
+          AtomNode b = atoms[(r+1) * COLS + c];
+          stroke(30, 70, 30, 60);
+          line(a.x, a.y, b.x, b.y);
+        }
+      }
+    }
+
+    // Partículas
+    for (FlyParticle fp : flyParts) fp.display();
+
+    // Átomos
+    for (AtomNode a : atoms) a.display();
+
+    // Painel inferior
+    drawControlPanel();
+
+    // Dica de hover
+    for (AtomNode a : atoms) {
+      if (dist(mouseX, mouseY, a.x, a.y) < 14 && !a.decayed) {
+        textFont(fontMono);
+        textSize(10);
+        textAlign(CENTER, BOTTOM);
+        fill(modeCols[selectedMode], 200);
+        text(a.symbol, a.x, a.y - 16);
+        break;
+      }
+    }
+
+    // Título
+    textFont(fontMono);
+    textSize(11);
+    textAlign(LEFT, TOP);
+    fill(COL_GREEN, 120);
+    text("☢  ANIMAÇÃO INTERATIVA — clique nos átomos para provocar decaimento", 14, 48);
+
+    // Contador
+    textAlign(RIGHT, TOP);
+    fill(COL_GREEN, 160);
+    text("Decaimentos: " + totalDecays, width - 14, 48);
+  }
+
+  void drawControlPanel() {
+    // Fundo do painel
+    noStroke();
+    fill(COL_PANEL, 230);
+    rect(0, 565, width, height - 565);
+    stroke(COL_GREEN, 50);
+    strokeWeight(1);
+    line(0, 565, width, 565);
+
+    // Botões de modo
+    int totalW = 4 * BTN_W + 3 * BTN_GAP;
+    int startX = width/2 - totalW/2;
+
+    for (int i = 0; i < 4; i++) {
+      int bx = startX + i * (BTN_W + BTN_GAP);
+      boolean over = mouseX > bx && mouseX < bx + BTN_W && mouseY > BTN_Y && mouseY < BTN_Y + BTN_H;
+      boolean active = selectedMode == i;
+      color c = modeCols[i];
+
+      noStroke();
+      fill(c, active ? 50 : (over ? 25 : 10));
+      rect(bx, BTN_Y, BTN_W, BTN_H, 4);
+      stroke(c, active ? 220 : (over ? 140 : 60));
+      strokeWeight(active ? 2 : 1);
+      noFill();
+      rect(bx, BTN_Y, BTN_W, BTN_H, 4);
+
+      textFont(fontMono);
+      textSize(12);
+      textAlign(CENTER, CENTER);
+      fill(c, active ? 255 : (over ? 200 : 130));
+      text(modeNames[i], bx + BTN_W/2, BTN_Y + BTN_H/2);
+    }
+
+    // Descrição do modo
+    textFont(fontMono);
+    textSize(10);
+    textAlign(CENTER, BOTTOM);
+    fill(modeCols[selectedMode], 180);
+    text(modeDesc[selectedMode], width/2, height - 4);
+
+    // Contadores por tipo
+    int cx = startX;
+    for (int i = 0; i < 4; i++) {
+      textSize(9);
+      textAlign(CENTER, TOP);
+      fill(modeCols[i], 140);
+      text(decaysByType[i] + " decay", cx + BTN_W/2, BTN_Y + BTN_H + 3);
+      cx += BTN_W + BTN_GAP;
+    }
+
+    // Botão RESET
+    int rx = width - 90, ry = BTN_Y + 2;
+    boolean overR = mouseX > rx && mouseX < rx + 76 && mouseY > ry && mouseY < ry + 28;
+    noStroke();
+    fill(COL_RED, overR ? 80 : 40);
+    rect(rx, ry, 76, 28, 4);
+    stroke(COL_RED, overR ? 200 : 100);
+    strokeWeight(1);
+    noFill();
+    rect(rx, ry, 76, 28, 4);
+    textFont(fontMono);
+    textSize(11);
+    textAlign(CENTER, CENTER);
+    fill(COL_RED, overR ? 230 : 160);
+    text("↺ RESET", rx + 38, ry + 14);
+  }
+
+  void handleClick(int mx, int my) {
+    // Botões de modo
+    int totalW = 4 * BTN_W + 3 * BTN_GAP;
+    int startX = width/2 - totalW/2;
+    for (int i = 0; i < 4; i++) {
+      int bx = startX + i * (BTN_W + BTN_GAP);
+      if (mx > bx && mx < bx + BTN_W && my > BTN_Y && my < BTN_Y + BTN_H) {
+        selectedMode = i; return;
+      }
+    }
+
+    // Botão reset
+    int rx = width - 90, ry = BTN_Y + 2;
+    if (mx > rx && mx < rx + 76 && my > ry && my < ry + 30) {
+      resetAll(); return;
+    }
+
+    // Clique num átomo
+    if (my > 44 && my < 565) {
+      AtomNode closest = null;
+      float minD = 20;
+      for (AtomNode a : atoms) {
+        float d = dist(mx, my, a.x, a.y);
+        if (d < minD && !a.decayed) { minD = d; closest = a; }
+      }
+      if (closest != null) {
+        closest.excite(selectedMode);
+      }
+    }
+  }
+
+  void handleDrag(int mx, int my) {
+    // Arrastar o mouse "varre" átomos com gamma ou neutron
+    if (selectedMode == 2 || selectedMode == 3) {
+      if (my > 44 && my < 565) {
+        for (AtomNode a : atoms) {
+          if (dist(mx, my, a.x, a.y) < 14 && !a.excited && !a.decayed) {
+            a.excite(selectedMode);
+          }
+        }
+      }
+    }
+  }
+
+  void emitParticle(float x, float y, int type, float angle) {
+    if (flyParts.size() < 300) {
+      flyParts.add(new FlyParticle(x, y, type, angle));
+      totalDecays++;
+      decaysByType[type]++;
+    }
+  }
+
+  void resetAll() {
+    for (AtomNode a : atoms) a.resetState();
+    flyParts.clear();
+    totalDecays = 0;
+    decaysByType = new int[]{0, 0, 0, 0};
+  }
+}
+
+// ============================================================
+// ÁTOMO NODE
+// ============================================================
+class AtomNode {
+  float x, y;
+  float baseR = 7;
+  float displayR;
+  boolean excited = false;
+  boolean decayed = false;
+  int decayType = -1;
+  float exciteTimer = 0;
+  float exciteMax   = 0;
+  float glowA       = 0;
+  String symbol;
+  color baseCol;
+  float wobble = 0;
+
+  // Símbolos de elementos instáveis
+  String[] symbols = {"U-238","Ra-226","Th-232","Cs-137","Sr-90","I-131","Co-60","Pu-239","Po-210","Kr-85"};
+
+  AtomNode(float x, float y) {
+    this.x = x;
+    this.y = y;
+    displayR = baseR;
+    symbol = symbols[(int)random(symbols.length)];
+    baseCol = lerpColor(COL_GREEN, COL_YELLOW, random(1));
+  }
+
+  void excite(int type) {
+    if (excited || decayed) return;
+    excited = true;
+    decayType = type;
+    exciteMax = random(40, 80);
+    exciteTimer = exciteMax;
+    glowA = 255;
+  }
+
+  void update() {
+    wobble += random(-0.05, 0.05);
+    wobble *= 0.9;
+
+    if (excited) {
+      exciteTimer--;
+      displayR = baseR + 4 * sin(PI * (1 - exciteTimer / exciteMax));
+
+      if (exciteTimer <= 0) {
+        // Decai!
+        excited = false;
+        decayed = true;
+        triggerDecay();
+      }
+    } else if (!decayed) {
+      displayR = lerp(displayR, baseR, 0.1);
+      glowA *= 0.92;
+    }
+  }
+
+  void triggerDecay() {
+    if (decayType == 0) {
+      // Alfa: 1 partícula em direção aleatória
+      animacao.emitParticle(x, y, 0, random(TWO_PI));
+
+    } else if (decayType == 1) {
+      // Beta: 1 elétron + antineutrino (2 partículas opostas)
+      float ang = random(TWO_PI);
+      animacao.emitParticle(x, y, 1, ang);
+      animacao.emitParticle(x, y, 1, ang + PI + random(-0.5, 0.5));
+
+    } else if (decayType == 2) {
+      // Gama: burst em todas as direções
+      int n = 8;
+      for (int i = 0; i < n; i++) {
+        animacao.emitParticle(x, y, 2, TWO_PI * i / n);
+      }
+
+    } else if (decayType == 3) {
+      // Fissão: fragmentos + 3 nêutrons
+      for (int i = 0; i < 3; i++) {
+        animacao.emitParticle(x, y, 3, random(TWO_PI));
+      }
+      // 2 fragmentos pesados opostos
+      float ang = random(TWO_PI);
+      animacao.emitParticle(x, y, 0, ang);
+      animacao.emitParticle(x, y, 0, ang + PI);
+    }
+  }
+
+  void display() {
+    if (decayed) {
+      // Átomo decaído: cinza pequeno
+      noStroke();
+      fill(40, 60, 40, 140);
+      ellipse(x + wobble, y, baseR * 0.6, baseR * 0.6);
+      return;
+    }
+
+    color c = excited ? lerpColor(baseCol, COL_RED, 1 - exciteTimer / exciteMax) : baseCol;
+
+    // Glow
+    if (glowA > 2 || excited) {
+      for (int g = (int)(displayR * 2.5); g > 0; g -= 2) {
+        fill(c, (int)(glowA * 0.08 * g / (displayR * 2.5)));
+        noStroke();
+        ellipse(x + wobble, y, g * 2, g * 2);
+      }
+    }
+
+    // Corpo
+    stroke(c, excited ? 220 : 160);
+    strokeWeight(1.2);
+    fill(c, excited ? 180 : 80);
+    ellipse(x + wobble, y, displayR * 2, displayR * 2);
+
+    // Elétron orbitando (só quando estável)
+    if (!excited) {
+      pushMatrix();
+      translate(x + wobble, y);
+      rotate(millis() * 0.002 + x * 0.01);
+      noStroke();
+      fill(COL_YELLOW, 180);
+      ellipse(displayR + 3, 0, 3, 3);
+      popMatrix();
+    }
+  }
+
+  void resetState() {
+    excited = false;
+    decayed = false;
+    decayType = -1;
+    exciteTimer = 0;
+    glowA = 0;
+    displayR = baseR;
+  }
+}
+
+// ============================================================
+// PARTÍCULA EM VOO
+// ============================================================
+class FlyParticle {
+  float x, y, vx, vy;
+  int type;        // 0=alfa, 1=beta, 2=gama, 3=neutron
+  float life, maxLife;
+  boolean alive = true;
+  float sz;
+  float trail[];  // histórico de posições para rastro
+  int trailLen = 12;
+  int trailIdx = 0;
+
+  // Velocidades por tipo
+  float[] speeds = {2.5, 5.0, 9.0, 7.0};
+  float[] sizes  = {7,   4,   3,   5};
+  color[] cols   = {#ff6600, #c8ff00, #39ff14, #00cfff};
+  float[] lives  = {60, 90, 120, 80};
+
+  FlyParticle(float x, float y, int type, float angle) {
+    this.x = x; this.y = y; this.type = type;
+    float spd = speeds[type] * (0.8 + random(0.4));
+    vx = cos(angle) * spd;
+    vy = sin(angle) * spd;
+    sz = sizes[type];
+    maxLife = lives[type];
+    life = maxLife;
+    trail = new float[trailLen * 2];
+    for (int i = 0; i < trail.length; i++) trail[i] = x;
+  }
+
+  void update() {
+    // Salvar posição no rastro
+    trail[trailIdx * 2]     = x;
+    trail[trailIdx * 2 + 1] = y;
+    trailIdx = (trailIdx + 1) % trailLen;
+
+    x += vx; y += vy;
+
+    // Alfa perde energia rapidamente
+    if (type == 0) { vx *= 0.97; vy *= 0.97; }
+
+    life--;
+    if (life <= 0 || x < 0 || x > width || y < 44 || y > 565) alive = false;
+  }
+
+  void display() {
+    color c = cols[type];
+    float a = map(life, 0, maxLife, 0, 220);
+
+    // Rastro
+    for (int i = 0; i < trailLen - 1; i++) {
+      int idx  = (trailIdx + i) % trailLen;
+      int idx2 = (trailIdx + i + 1) % trailLen;
+      float ta = map(i, 0, trailLen, 0, a * 0.5);
+      float ts = sz * map(i, 0, trailLen, 0.2, 0.8);
+      stroke(c, ta);
+      strokeWeight(ts);
+      line(trail[idx*2], trail[idx*2+1], trail[idx2*2], trail[idx2*2+1]);
+    }
+
+    // Corpo da partícula
+    noStroke();
+    fill(c, a * 0.3);
+    ellipse(x, y, sz * 2.5, sz * 2.5);
+    fill(c, a);
+    ellipse(x, y, sz, sz);
+
+    // Label do tipo
+    if (life > maxLife * 0.7) {
+      textFont(fontMono);
+      textSize(9);
+      textAlign(CENTER, BOTTOM);
+      fill(c, a * 0.8);
+      String[] typeLabels = {"α", "β", "γ", "n"};
+      text(typeLabels[type], x, y - sz - 2);
+    }
+  }
+}
