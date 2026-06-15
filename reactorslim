@@ -1,0 +1,488 @@
+// ============================================================
+// SIMULADOR DE REATOR NUCLEAR — Aba 3
+// ============================================================
+
+class ReactorSim {
+  // Parâmetros físicos
+  float reactivity   = 0.3;   // 0..1
+  float temperature  = 300;   // Kelvin
+  float power        = 0.0;   // 0..1
+  float coolantFlow  = 0.7;   // 0..1
+  float controlRods  = 0.5;   // 0 = inseridos, 1 = retirados
+  float neutronFlux  = 0.0;
+  boolean meltdown   = false;
+  boolean scram      = false;
+  float meltAlpha    = 0;
+  float scramCooldown = 0;
+
+  // Histórico de temperatura
+  float[] tempHistory = new float[200];
+  int histIdx = 0;
+  float histTimer = 0;
+
+  // Nêutrons visuais
+  Neutron[] neutrons = new Neutron[60];
+  int neutronCount   = 0;
+  float spawnTimer   = 0;
+
+  // UI rects
+  int UIX = 520, UIY = 54;
+  int UIW = 340, UIH = 570;
+  int sliderH = 20;
+
+  ReactorSim() {
+    for (int i = 0; i < tempHistory.length; i++) tempHistory[i] = 300;
+    for (int i = 0; i < neutrons.length; i++) neutrons[i] = new Neutron();
+  }
+
+  void update() {
+    if (meltdown) {
+      meltAlpha = min(255, meltAlpha + 3);
+      // partícula de fogo
+      return;
+    }
+    if (scram) {
+      scramCooldown -= 1;
+      controlRods = max(0.0, controlRods - 0.02);
+      if (scramCooldown <= 0) { scram = false; }
+    }
+
+    // Física simplificada
+    float targetPower = controlRods * reactivity * (coolantFlow > 0.1 ? 1.0 : 1.8);
+    power = lerp(power, targetPower, 0.04);
+    power = constrain(power, 0, 1.5);
+
+    float heatIn  = power * 300;
+    float heatOut = coolantFlow * 180 + 20;
+    temperature += (heatIn - heatOut) * 0.02;
+    temperature = max(20, temperature);
+
+    // Nêutrons visuais
+    neutronFlux = power;
+    spawnTimer += neutronFlux;
+    if (spawnTimer > 4 && neutronCount < neutrons.length) {
+      neutrons[neutronCount % neutrons.length].reset();
+      neutronCount++;
+      if (neutronCount > neutrons.length) neutronCount = neutrons.length;
+      spawnTimer = 0;
+    }
+    for (int i = 0; i < neutronCount; i++) neutrons[i].update();
+
+    // Histórico
+    histTimer += 1;
+    if (histTimer > 4) {
+      tempHistory[histIdx] = temperature;
+      histIdx = (histIdx + 1) % tempHistory.length;
+      histTimer = 0;
+    }
+
+    // Meltdown
+    if (temperature > 1400) { meltdown = true; }
+  }
+
+  void display() {
+    // Painel de fundo
+    noStroke();
+    fill(COL_PANEL);
+    rect(0, 44, width, height - 44);
+
+    // Seção esquerda: desenho do reator
+    drawReactorViz(30, 54, 470, 560);
+
+    // Painel de controle direito
+    drawControlPanel();
+
+    // Gráfico histórico
+    drawTempGraph();
+
+    // Meltdown overlay
+    if (meltdown) drawMeltdown();
+  }
+
+  void drawReactorViz(int x, int y, int w, int h) {
+    // Vaso de pressão
+    int rx = x + 60, ry = y + 50, rw = 200, rh = 280;
+
+    // Brilho externo proporcional à potência
+    for (int g = 20; g > 0; g -= 2) {
+      color gc = lerpColor(COL_GREEN, COL_RED, power / 1.2);
+      fill(gc, (int)(8 * power * g / 20.0));
+      noStroke();
+      rect(rx - g, ry - g, rw + g*2, rh + g*2, 20);
+    }
+
+    // Corpo do reator
+    stroke(COL_GREEN, 120);
+    strokeWeight(3);
+    fill(10, 30, 10);
+    rect(rx, ry, rw, rh, 12);
+
+    // Barras de combustível (amarelo/laranja)
+    int numRods = 9;
+    int rodW = 12;
+    float spacing = (rw - 30) / (float)(numRods);
+    for (int i = 0; i < numRods; i++) {
+      float fx = rx + 15 + i * spacing;
+      color fc = lerpColor(COL_YELLOW, COL_RED, power * 0.8);
+      stroke(fc, 200);
+      strokeWeight(rodW);
+      line(fx, ry + 30, fx, ry + rh - 30);
+    }
+
+    // Barras de controle (cinza → verde = inseridas)
+    float crodDepth = (1.0 - controlRods) * (rh - 60);
+    for (int i = 0; i < 5; i++) {
+      float fx = rx + 25 + i * (rw - 50) / 4.0;
+      stroke(150, 200, 150, 220);
+      strokeWeight(8);
+      line(fx, ry + 10, fx, ry + 10 + crodDepth);
+    }
+
+    // Coolant flow visual
+    if (coolantFlow > 0.05) {
+      float speed = coolantFlow * 3;
+      for (int j = 0; j < 6; j++) {
+        float cy = ry + rh - 20 - ((millis() * speed / 400.0 + j * 50) % (rh - 40));
+        stroke(#00aaff, 140);
+        strokeWeight(2);
+        line(rx + 5, cy, rx + 5, cy + 12);
+        line(rx + rw - 5, cy, rx + rw - 5, cy + 12);
+      }
+    }
+
+    // Labels
+    textFont(fontMono);
+    textSize(10);
+    textAlign(CENTER, BOTTOM);
+    fill(COL_GREEN, 150);
+    text("VASO DE PRESSÃO", rx + rw/2, ry - 6);
+    fill(150, 200, 150, 130);
+    text("▲ Barras de controle", rx + rw/2, ry + 10 + crodDepth + 14);
+
+    // Temperatura no core
+    color tCol = lerpColor(COL_GREEN, COL_RED, constrain((temperature - 300) / 1100.0, 0, 1));
+    textSize(13);
+    textAlign(CENTER, CENTER);
+    fill(tCol, 220);
+    text(nf(temperature, 0, 0) + " K", rx + rw/2, ry + rh/2 + 10);
+    textSize(10);
+    fill(tCol, 150);
+    text("TEMPERATURA DO CORE", rx + rw/2, ry + rh/2 + 26);
+
+    // Geradores (turbina estilizada)
+    noStroke();
+    fill(30, 60, 30);
+    rect(rx + rw + 30, ry + rh/3, 70, 50, 6);
+    stroke(COL_GREEN, 140);
+    strokeWeight(2);
+    noFill();
+    rect(rx + rw + 30, ry + rh/3, 70, 50, 6);
+    textFont(fontMono);
+    textSize(9);
+    textAlign(CENTER, CENTER);
+    fill(COL_GREEN, 180);
+    text("TURBINA", rx + rw + 65, ry + rh/3 + 16);
+    float genPow = power * 850; // MW simulado
+    fill(COL_YELLOW, 200);
+    text(nf(genPow, 0, 0) + " MW", rx + rw + 65, ry + rh/3 + 32);
+
+    // Linha de steam
+    stroke(200, 220, 255, (int)(80 * coolantFlow));
+    strokeWeight(2);
+    line(rx + rw, ry + rh/2 - 20, rx + rw + 30, ry + rh/3 + 10);
+
+    // Status
+    String statusTxt = meltdown ? "MELTDOWN!" : scram ? "SCRAM ATIVADO" :
+                       power > 1.1 ? "SUPERPOTÊNCIA" :
+                       power > 0.7 ? "OPERAÇÃO NORMAL" : "BAIXA POTÊNCIA";
+    color statusCol  = meltdown ? COL_RED : scram ? COL_ORANGE :
+                       power > 1.1 ? COL_ORANGE : COL_GREEN;
+    float blink = (millis() % 800 < 400) ? 1.0 : 0.5;
+    textFont(fontMono);
+    textSize(12);
+    textAlign(LEFT, BOTTOM);
+    fill(statusCol, (int)(220 * (meltdown || power > 1.1 ? blink : 1.0)));
+    text("STATUS: " + statusTxt, x, y + h + 4);
+  }
+
+  void drawControlPanel() {
+    int cx = UIX, cy = UIY;
+    textFont(fontMono);
+
+    // Título painel
+    stroke(COL_GREEN, 80);
+    strokeWeight(1);
+    noFill();
+    rect(cx, cy, UIW, UIH, 6);
+    fill(COL_GREEN, 30);
+    rect(cx, cy, UIW, 28, 6, 6, 0, 0);
+    textSize(12);
+    textAlign(CENTER, CENTER);
+    fill(COL_GREEN);
+    text("⚙  PAINEL DE CONTROLE", cx + UIW/2, cy + 14);
+
+    int oy = cy + 44;
+
+    // Slider: Barras de controle
+    oy = drawSlider(cx + 10, oy, UIW - 20, "BARRAS DE CONTROLE", controlRods, COL_GREEN);
+    textSize(9);
+    fill(COL_GREEN, 120);
+    textAlign(LEFT, TOP);
+    text("0 = inseridas (SCRAM)    1 = retiradas (máx. potência)", cx + 10, oy - 8);
+
+    oy += 12;
+    oy = drawSlider(cx + 10, oy, UIW - 20, "FLUXO DO REFRIGERANTE", coolantFlow, #00aaff);
+    oy += 4;
+    oy = drawSlider(cx + 10, oy, UIW - 20, "REATIVIDADE DO COMBUSTÍVEL", reactivity, COL_YELLOW);
+
+    // Medidores
+    oy += 12;
+    drawGauge(cx + 10,       oy, 90, 90, "POTÊNCIA",    power / 1.2,       lerpColor(COL_GREEN, COL_RED, power));
+    drawGauge(cx + 115,      oy, 90, 90, "TEMPERATURA", constrain((temperature-300)/1100.0, 0, 1), lerpColor(COL_GREEN, COL_RED, constrain((temperature-300)/1100.0, 0, 1)));
+    drawGauge(cx + 220,      oy, 90, 90, "REFRIGERAÇÃO", coolantFlow, #00aaff);
+
+    oy += 104;
+
+    // Botão SCRAM
+    boolean overScram = mouseX > cx+10 && mouseX < cx+UIW-10 && mouseY > oy && mouseY < oy+40;
+    noStroke();
+    fill(COL_RED, overScram ? 200 : 120);
+    rect(cx + 10, oy, UIW - 20, 40, 4);
+    stroke(COL_RED);
+    strokeWeight(2);
+    noFill();
+    rect(cx + 10, oy, UIW - 20, 40, 4);
+    textSize(14);
+    textAlign(CENTER, CENTER);
+    fill(255, 240, 240);
+    text("⚠  SCRAM EMERGENCIAL", cx + UIW/2, oy + 20);
+
+    oy += 52;
+
+    // Botão Reset (se meltdown)
+    if (meltdown) {
+      boolean overReset = mouseX > cx+10 && mouseX < cx+UIW-10 && mouseY > oy && mouseY < oy+36;
+      noStroke();
+      fill(COL_ORANGE, overReset ? 200 : 100);
+      rect(cx + 10, oy, UIW - 20, 36, 4);
+      textSize(12);
+      textAlign(CENTER, CENTER);
+      fill(255);
+      text("↺  REINICIAR SIMULAÇÃO", cx + UIW/2, oy + 18);
+    }
+
+    // Legenda
+    oy = cy + UIH - 60;
+    textSize(9);
+    textAlign(LEFT, TOP);
+    fill(COL_GREEN, 110);
+    text("☢ Simulação educacional simplificada.\n   Baseada em física de reatores PWR.", cx + 10, oy);
+  }
+
+  int drawSlider(int x, int y, int w, String label, float val, color c) {
+    textFont(fontMono);
+    textSize(11);
+    textAlign(LEFT, BOTTOM);
+    fill(200, 230, 200, 200);
+    text(label, x, y);
+    y += 4;
+
+    // Track
+    noStroke();
+    fill(30, 50, 30);
+    rect(x, y, w, sliderH, 10);
+
+    // Fill
+    fill(c, 200);
+    rect(x, y, w * val, sliderH, 10);
+
+    // Handle
+    float hx = x + w * val;
+    fill(255);
+    ellipse(hx, y + sliderH/2, 16, 16);
+    fill(c);
+    ellipse(hx, y + sliderH/2, 8, 8);
+
+    // Value
+    textSize(10);
+    textAlign(RIGHT, BOTTOM);
+    fill(c, 220);
+    text(nf(val * 100, 0, 0) + "%", x + w, y - 2);
+
+    // Detecta drag
+    if (mousePressed && mouseX > x-8 && mouseX < x+w+8 && mouseY > y-4 && mouseY < y+sliderH+4) {
+      float nv = constrain((mouseX - x) / (float)w, 0, 1);
+      if (label.contains("BARRAS")) { controlRods = nv; scram = false; }
+      else if (label.contains("REFRIGER")) coolantFlow = nv;
+      else if (label.contains("REATIV")) reactivity = nv;
+    }
+
+    return y + sliderH + 18;
+  }
+
+  void drawGauge(int x, int y, int w, int h, String label, float val, color c) {
+    val = constrain(val, 0, 1);
+    noStroke();
+    fill(10, 25, 10);
+    rect(x, y, w, h, 6);
+    stroke(c, 80);
+    strokeWeight(1);
+    noFill();
+    rect(x, y, w, h, 6);
+
+    // Arc gauge
+    int gx = x + w/2, gy = y + h/2 + 8;
+    int gr = (w < h ? w : h) / 2 - 8;
+
+    stroke(40, 70, 40);
+    strokeWeight(6);
+    noFill();
+    arc(gx, gy, gr*2, gr*2, radians(140), radians(400));
+
+    stroke(c, 220);
+    strokeWeight(6);
+    arc(gx, gy, gr*2, gr*2, radians(140), radians(140 + val * 260));
+
+    // Needle
+    float ang = radians(140 + val * 260);
+    stroke(255, 200);
+    strokeWeight(2);
+    line(gx, gy, gx + cos(ang) * gr * 0.8, gy + sin(ang) * gr * 0.8);
+
+    // Value text
+    textFont(fontMono);
+    textSize(10);
+    textAlign(CENTER, BOTTOM);
+    fill(c, 220);
+    text(nf(val*100, 0, 0) + "%", gx, gy + 6);
+
+    textSize(9);
+    fill(160, 200, 160, 180);
+    text(label, gx, y + h - 3);
+  }
+
+  void drawTempGraph() {
+    int gx = 30, gy = 390, gw = 460, gh = 100;
+    noStroke();
+    fill(COL_PANEL);
+    rect(gx, gy, gw, gh, 4);
+    stroke(COL_GREEN, 50);
+    strokeWeight(1);
+    noFill();
+    rect(gx, gy, gw, gh, 4);
+
+    textFont(fontMono);
+    textSize(9);
+    fill(COL_GREEN, 120);
+    textAlign(LEFT, TOP);
+    text("HISTÓRICO DE TEMPERATURA", gx + 6, gy + 4);
+
+    // Danger line at 1200 K
+    float dangerY = map(1200, 20, 1500, gy + gh - 10, gy + 16);
+    stroke(COL_RED, 80);
+    strokeWeight(1);
+    line(gx + 6, dangerY, gx + gw - 6, dangerY);
+    textAlign(RIGHT, CENTER);
+    fill(COL_RED, 130);
+    text("1200K", gx + gw - 4, dangerY);
+
+    // Plot
+    stroke(COL_GREEN, 200);
+    strokeWeight(2);
+    noFill();
+    beginShape();
+    for (int i = 0; i < tempHistory.length; i++) {
+      int idx = (histIdx + i) % tempHistory.length;
+      float px = map(i, 0, tempHistory.length - 1, gx + 6, gx + gw - 6);
+      float py = map(tempHistory[idx], 20, 1500, gy + gh - 10, gy + 16);
+      vertex(px, py);
+    }
+    endShape();
+
+    // Current temp label
+    textAlign(LEFT, BOTTOM);
+    color tc = lerpColor(COL_GREEN, COL_RED, constrain((temperature - 300) / 1100.0, 0, 1));
+    fill(tc, 220);
+    textSize(11);
+    text("T = " + nf(temperature, 0, 0) + " K", gx + 6, gy + gh - 4);
+  }
+
+  void drawMeltdown() {
+    // Overlay vermelho pulsando
+    float blink = (sin(millis() * 0.01) + 1) * 0.5;
+    noStroke();
+    fill(255, 0, 0, (int)(80 + 60 * blink));
+    rect(0, 44, width, height - 44);
+
+    textFont(fontTitle);
+    textSize(36);
+    textAlign(CENTER, CENTER);
+    fill(255, (int)(200 + 55 * blink));
+    text("☢ MELTDOWN ☢", width/2, height/2 - 20);
+    textFont(fontMono);
+    textSize(14);
+    fill(255, 220);
+    text("Temperatura crítica excedida! O reator fundiu.", width/2, height/2 + 26);
+    textSize(12);
+    fill(255, 180);
+    text("Clique em 'REINICIAR SIMULAÇÃO' para recomeçar.", width/2, height/2 + 52);
+  }
+
+  void handleClick(int mx, int my) {
+    int cy = UIY;
+    int scramY = cy + 44 + 3*(sliderH + 36) + 104;
+
+    // SCRAM
+    if (mx > UIX+10 && mx < UIX+UIW-10 && my > scramY && my < scramY+40) {
+      scram = true;
+      scramCooldown = 200;
+    }
+
+    // Reset
+    int resetY = scramY + 52;
+    if (meltdown && mx > UIX+10 && mx < UIX+UIW-10 && my > resetY && my < resetY+36) {
+      reset();
+    }
+  }
+
+  void reset() {
+    meltdown = false;
+    meltAlpha = 0;
+    scram = false;
+    temperature = 300;
+    power = 0;
+    controlRods = 0.5;
+    coolantFlow = 0.7;
+    reactivity = 0.3;
+    neutronCount = 0;
+    for (int i = 0; i < tempHistory.length; i++) tempHistory[i] = 300;
+    histIdx = 0;
+  }
+}
+
+// ============================================================
+// NÊUTRON VISUAL
+// ============================================================
+class Neutron {
+  float x, y, vx, vy, life;
+  boolean active = false;
+
+  void reset() {
+    // Nasce dentro do vaso do reator
+    x = random(90, 230);
+    y = random(104, 330);
+    float ang = random(TWO_PI);
+    float speed = random(1.5, 4.0);
+    vx = cos(ang) * speed;
+    vy = sin(ang) * speed;
+    life = random(20, 60);
+    active = true;
+  }
+
+  void update() {
+    if (!active) return;
+    x += vx; y += vy;
+    life--;
+    if (life <= 0) active = false;
+  }
+}
